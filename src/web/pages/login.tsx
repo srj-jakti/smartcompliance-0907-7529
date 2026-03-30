@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Zap, Building2, User, Briefcase, Eye, EyeOff, ArrowRight, Shield, CheckCircle } from "lucide-react";
-import { setUser, DEMO_ACCOUNTS, UserRole, redirectByRole } from "@/lib/auth";
+import { setUser, getUser, DEMO_ACCOUNTS, UserRole, redirectByRole } from "@/lib/auth";
 import { toast } from "sonner";
 
 const ROLES: { key: UserRole; label: string; sub: string; icon: any; color: string; ring: string; bg: string }[] = [
@@ -31,6 +31,12 @@ export default function Login() {
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // If already logged in, redirect to correct portal
+  useEffect(() => {
+    const user = getUser();
+    if (user) redirectByRole(user.role);
+  }, []);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!role) { toast.error("Select your role first"); return; }
@@ -49,13 +55,10 @@ export default function Login() {
   };
 
   const fillDemo = (email: string, pw: string, r: UserRole) => {
-    setRole(r); setEmail(email); setPassword(pw);
-    setTimeout(async () => {
-      setLoading(true);
-      await new Promise(x => setTimeout(x, 400));
-      const match = DEMO_ACCOUNTS.find(a => a.email === email);
-      if (match) { const { password: _, ...user } = match; setUser(user); redirectByRole(r); }
-    }, 100);
+    setRole(r);
+    setEmail(email);
+    setPassword(pw);
+    // just fills the form — user must click Sign In
   };
 
   const selectedRoleData = ROLES.find(r => r.key === role);
@@ -164,7 +167,7 @@ export default function Login() {
             {/* Demo Credentials */}
             <div className="px-6 pb-6">
               <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                <p className="text-xs font-bold text-gray-400 uppercase mb-3 tracking-wide">Demo Accounts — click to auto-login</p>
+                <p className="text-xs font-bold text-gray-400 uppercase mb-3 tracking-wide">Demo Accounts — click to fill credentials</p>
                 <div className="space-y-3">
                   {Object.entries(demoFor).map(([r, accs]) => {
                     const rd = ROLES.find(x => x.key === r as UserRole)!;

@@ -129,8 +129,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </button>
             </Link>
             <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-bold">
-              CA
+              {caUser?.name?.charAt(0) || "C"}
             </div>
+            <button onClick={logout}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 border border-red-200 rounded-lg font-medium transition-colors">
+              <LogOut className="w-4 h-4" /> Logout
+            </button>
           </div>
         </header>
 

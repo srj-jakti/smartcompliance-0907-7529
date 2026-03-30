@@ -1,8 +1,9 @@
 import { Hono } from "hono";
 import { drizzle } from "drizzle-orm/d1";
-import { eq, desc, and, or, like } from "drizzle-orm";
+import { eq, desc, and, or } from "drizzle-orm";
 import * as schema from "./database/schema";
-import { randomUUID } from "crypto";
+// Use Web Crypto API (works in CF Workers + Node)
+const randomUUID = () => crypto.randomUUID();
 
 type Bindings = { DB: D1Database };
 const app = new Hono<{ Bindings: Bindings }>();

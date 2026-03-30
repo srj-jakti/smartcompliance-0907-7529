@@ -83,9 +83,13 @@ export default function EmployeeLayout({ children }: { children: React.ReactNode
             <button className="relative p-2 hover:bg-gray-100 rounded-lg">
               <Bell className="w-5 h-5 text-gray-600" />
             </button>
-            <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-white text-sm font-bold" onClick={logout} title="Logout" style={{ cursor: "pointer" }}>
+            <div className="w-8 h-8 rounded-full bg-purple-600 flex items-center justify-center text-white text-sm font-bold">
               {user?.name?.charAt(0)}
             </div>
+            <button onClick={logout}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-500 hover:bg-red-50 border border-red-200 rounded-lg font-medium transition-colors">
+              <LogOut className="w-4 h-4" /> Logout
+            </button>
           </div>
         </header>
         <main className="flex-1 overflow-y-auto p-6">{children}</main>
