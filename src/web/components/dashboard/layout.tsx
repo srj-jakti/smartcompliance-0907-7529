@@ -19,6 +19,7 @@ const navItems = [
   { path: "/dashboard/documents", icon: FolderOpen, label: "Documents" },
   { path: "/dashboard/dsc", icon: Shield, label: "DSC" },
   { path: "/dashboard/attendance", icon: Clock, label: "Attendance" },
+  { path: "/dashboard/leaves", icon: Calendar, label: "Leave Mgmt" },
   { path: "/dashboard/ai", icon: Bot, label: "AI Assistant", badge: "AI" },
   { path: "/dashboard/reports", icon: BarChart3, label: "Reports" },
   { path: "/dashboard/settings", icon: Settings, label: "Settings" },

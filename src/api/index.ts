@@ -544,6 +544,143 @@ app.post("/api/ai/chat", async (c) => {
   return c.json({ reply, timestamp: new Date().toISOString() });
 });
 
+// ─── AI INVOICE EXTRACTION ────────────────────────────────────────────────────
+app.post("/api/ai/extract-invoice", async (c) => {
+  const body = await c.req.json();
+  const { image, mimeType, fileName } = body;
+  const baseUrl = c.env.AI_GATEWAY_BASE_URL || "https://api.openai.com/v1";
+  const apiKey = c.env.AI_GATEWAY_API_KEY;
+  if (!apiKey) return c.json({ error: "No API key" }, 500);
+
+  const prompt = `You are an invoice data extraction expert. Extract all key information from this invoice image and return a JSON object with these exact fields:
+{
+  "vendor": "vendor/seller name",
+  "invoiceNo": "invoice number",
+  "date": "invoice date as DD/MM/YYYY",
+  "amount": "base amount without GST as number string",
+  "gst": "GST/tax amount as number string",
+  "total": "total amount including GST as number string",
+  "description": "brief description of goods/services",
+  "gstin": "GSTIN if present or empty string",
+  "buyerName": "buyer name if present"
+}
+Return ONLY the JSON object, no explanation. If a field is not found, use empty string or "0" for amounts.`;
+
+  try {
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: prompt },
+            { type: "image_url", image_url: { url: `data:${mimeType || "image/jpeg"};base64,${image}`, detail: "high" } }
+          ]
+        }],
+        max_tokens: 500,
+        temperature: 0
+      })
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      return c.json({ vendor: fileName || "Unknown", invoiceNo: "", date: "", amount: "0", gst: "0", total: "0", description: `API error: ${res.status}` });
+    }
+    const data: any = await res.json();
+    const content = data.choices?.[0]?.message?.content || "{}";
+    const cleaned = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    const extracted = JSON.parse(cleaned);
+    return c.json(extracted);
+  } catch (e: any) {
+    return c.json({ vendor: fileName || "Unknown", invoiceNo: "", date: "", amount: "0", gst: "0", total: "0", description: `Extraction failed: ${e.message}` });
+  }
+});
+
+// ─── SUB-TASKS ────────────────────────────────────────────────────────────────
+app.get("/api/tasks/:id/subtasks", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  const rows = await db.select().from(schema.subTasks).where(eq(schema.subTasks.taskId, id)).orderBy(schema.subTasks.createdAt);
+  return c.json(rows);
+});
+app.post("/api/tasks/:id/subtasks", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  const body = await c.req.json();
+  const row = { id: randomUUID(), taskId: id, title: body.title, status: body.status || "pending", assignedTo: body.assignedTo || null };
+  await db.insert(schema.subTasks).values(row);
+  return c.json(row, 201);
+});
+app.put("/api/subtasks/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  const body = await c.req.json();
+  await db.update(schema.subTasks).set(body).where(eq(schema.subTasks.id, id));
+  return c.json({ success: true });
+});
+app.delete("/api/subtasks/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  await db.delete(schema.subTasks).where(eq(schema.subTasks.id, id));
+  return c.json({ success: true });
+});
+
+// ─── TIME TRACKING ────────────────────────────────────────────────────────────
+app.get("/api/time-logs", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const firmId = c.req.query("firmId") || "";
+  const taskId = c.req.query("taskId");
+  const conditions = [eq(schema.timeLogs.firmId, firmId)];
+  if (taskId) conditions.push(eq(schema.timeLogs.taskId, taskId));
+  const rows = await db.select().from(schema.timeLogs).where(and(...conditions)).orderBy(desc(schema.timeLogs.createdAt));
+  return c.json(rows);
+});
+app.post("/api/time-logs", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const body = await c.req.json();
+  const row = { id: randomUUID(), firmId: body.firmId, taskId: body.taskId, employeeId: body.employeeId, employeeName: body.employeeName, hours: body.hours, description: body.description || null, logDate: body.logDate || new Date().toISOString().slice(0, 10) };
+  await db.insert(schema.timeLogs).values(row);
+  return c.json(row, 201);
+});
+app.delete("/api/time-logs/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  await db.delete(schema.timeLogs).where(eq(schema.timeLogs.id, id));
+  return c.json({ success: true });
+});
+
+// ─── LEAVE MANAGEMENT ─────────────────────────────────────────────────────────
+app.get("/api/leaves", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const firmId = c.req.query("firmId") || "";
+  const empId = c.req.query("employeeId");
+  const conditions = [eq(schema.leaveRequests.firmId, firmId)];
+  if (empId) conditions.push(eq(schema.leaveRequests.employeeId, empId));
+  const rows = await db.select().from(schema.leaveRequests).where(and(...conditions)).orderBy(desc(schema.leaveRequests.createdAt));
+  return c.json(rows);
+});
+app.post("/api/leaves", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const body = await c.req.json();
+  const row = { id: randomUUID(), firmId: body.firmId, employeeId: body.employeeId, employeeName: body.employeeName, leaveType: body.leaveType, fromDate: body.fromDate, toDate: body.toDate, days: body.days, reason: body.reason || null, status: "pending" };
+  await db.insert(schema.leaveRequests).values(row);
+  return c.json(row, 201);
+});
+app.put("/api/leaves/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  const body = await c.req.json();
+  await db.update(schema.leaveRequests).set(body).where(eq(schema.leaveRequests.id, id));
+  return c.json({ success: true });
+});
+app.delete("/api/leaves/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  await db.delete(schema.leaveRequests).where(eq(schema.leaveRequests.id, id));
+  return c.json({ success: true });
+});
+
 // ─── DEMO BOOKING ────────────────────────────────────────────────────────────
 app.post("/api/demo", async (c) => {
   const db = drizzle(c.env.DB, { schema });

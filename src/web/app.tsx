@@ -19,6 +19,7 @@ import Invoices from "./pages/dashboard/invoices";
 import Documents from "./pages/dashboard/documents";
 import DSC from "./pages/dashboard/dsc";
 import Attendance from "./pages/dashboard/attendance";
+import Leaves from "./pages/dashboard/leaves";
 import AIAssistant from "./pages/dashboard/ai-assistant";
 import Reports from "./pages/dashboard/reports";
 import Settings from "./pages/dashboard/settings";
@@ -99,6 +100,7 @@ export default function App() {
         <Route path="/dashboard/documents"><CA><Documents /></CA></Route>
         <Route path="/dashboard/dsc"><CA><DSC /></CA></Route>
         <Route path="/dashboard/attendance"><CA><Attendance /></CA></Route>
+        <Route path="/dashboard/leaves"><CA><Leaves /></CA></Route>
         <Route path="/dashboard/ai"><CA><AIAssistant /></CA></Route>
         <Route path="/dashboard/reports"><CA><Reports /></CA></Route>
         <Route path="/dashboard/settings"><CA><Settings /></CA></Route>

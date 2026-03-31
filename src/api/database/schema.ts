@@ -177,6 +177,45 @@ export const notifications = sqliteTable("notifications", {
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
 
+// ─── SUB-TASKS ────────────────────────────────────────────────────────────────
+export const subTasks = sqliteTable("sub_tasks", {
+  id: text("id").primaryKey(),
+  taskId: text("task_id").notNull(),
+  title: text("title").notNull(),
+  status: text("status").default("pending"), // pending, in_progress, completed
+  assignedTo: text("assigned_to"),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// ─── TIME LOGS ────────────────────────────────────────────────────────────────
+export const timeLogs = sqliteTable("time_logs", {
+  id: text("id").primaryKey(),
+  firmId: text("firm_id").notNull(),
+  taskId: text("task_id").notNull(),
+  employeeId: text("employee_id").notNull(),
+  employeeName: text("employee_name").notNull(),
+  hours: real("hours").notNull(),
+  description: text("description"),
+  logDate: text("log_date").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// ─── LEAVE REQUESTS ───────────────────────────────────────────────────────────
+export const leaveRequests = sqliteTable("leave_requests", {
+  id: text("id").primaryKey(),
+  firmId: text("firm_id").notNull(),
+  employeeId: text("employee_id").notNull(),
+  employeeName: text("employee_name").notNull(),
+  leaveType: text("leave_type").notNull(), // casual, sick, earned, half_day
+  fromDate: text("from_date").notNull(),
+  toDate: text("to_date").notNull(),
+  days: real("days").notNull(),
+  reason: text("reason"),
+  status: text("status").default("pending"), // pending, approved, rejected
+  reviewedBy: text("reviewed_by"),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
 // ─── DEMO BOOKINGS ────────────────────────────────────────────────────────────
 export const demoBookings = sqliteTable("demo_bookings", {
   id: text("id").primaryKey(),
