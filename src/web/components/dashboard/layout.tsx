@@ -52,7 +52,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </div>
             {sidebarOpen && (
               <div>
-                <p className="text-white font-bold text-sm leading-tight">SmartCompliance</p>
+                <p className="text-white font-bold text-sm leading-tight">Smart Compliance Tracker</p>
                 <p className="text-blue-300 text-xs">CA Practice Suite</p>
               </div>
             )}

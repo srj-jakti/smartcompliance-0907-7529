@@ -8,7 +8,10 @@ export default function ClientInvoices() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [filter, setFilter] = useState("all");
 
-  useEffect(() => { fetch(`/api/invoices?firmId=${getUser()?.firmId||""}`).then(r => r.json()).then(setInvoices); }, []);
+  useEffect(() => {
+    const u = getUser();
+    fetch(`/api/invoices?firmId=${u?.firmId||""}&clientId=${u?.id||""}`).then(r => r.json()).then(setInvoices);
+  }, []);
 
   const filtered = filter === "all" ? invoices : invoices.filter(i => i.status === filter);
   const totalDue = invoices.filter(i => i.status !== "paid").reduce((s, i) => s + i.totalAmount, 0);

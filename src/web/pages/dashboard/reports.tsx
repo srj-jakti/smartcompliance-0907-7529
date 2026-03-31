@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
-import { BarChart3, TrendingUp, IndianRupee, Users, CheckSquare, Download } from "lucide-react";
+import { TrendingUp, IndianRupee, Users, CheckSquare, Download } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getUser } from "@/lib/auth";
+import * as XLSX from "xlsx";
+import { toast } from "sonner";
 
 export default function Reports() {
   const [stats, setStats] = useState<any>(null);
@@ -13,6 +15,76 @@ export default function Reports() {
     fetch(`/api/tasks?firmId=${getUser()?.firmId||""}`).then(r => r.json()).then(setTasks);
     fetch(`/api/invoices?firmId=${getUser()?.firmId||""}`).then(r => r.json()).then(setInvoices);
   }, []);
+
+  const exportReport = () => {
+    try {
+      const wb = XLSX.utils.book_new();
+
+      // Sheet 1: Summary KPIs
+      const summaryData = [
+        ["SmartCompliance — Practice Report", "", ""],
+        ["Generated on", new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }), ""],
+        ["", "", ""],
+        ["METRIC", "VALUE", ""],
+        ["Total Clients", stats?.totalClients ?? 0, ""],
+        ["Active Clients", stats?.activeClients ?? 0, ""],
+        ["Total Tasks", stats?.totalTasks ?? 0, ""],
+        ["Completed Tasks", stats?.completedTasks ?? 0, ""],
+        ["Pending Tasks", stats?.pendingTasks ?? 0, ""],
+        ["Overdue Tasks", stats?.overdueTasks ?? 0, ""],
+        ["Revenue Collected (₹)", stats?.totalRevenue ?? 0, ""],
+        ["Pending Collection (₹)", stats?.pendingAmount ?? 0, ""],
+        ["Total Invoiced (₹)", (stats?.totalRevenue ?? 0) + (stats?.pendingAmount ?? 0), ""],
+        ["Collection Rate (%)", stats ? Math.round((stats.totalRevenue / ((stats.totalRevenue + stats.pendingAmount) || 1)) * 100) : 0, ""],
+        ["Task Completion Rate (%)", stats ? Math.round((stats.completedTasks / (stats.totalTasks || 1)) * 100) : 0, ""],
+      ];
+      const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+      wsSummary["!cols"] = [{ wch: 30 }, { wch: 20 }, { wch: 10 }];
+      XLSX.utils.book_append_sheet(wb, wsSummary, "Summary");
+
+      // Sheet 2: Tasks
+      const taskHeaders = ["Task ID", "Title", "Category", "Status", "Assigned To", "Client", "Due Date", "Billing Amount (₹)", "Created At"];
+      const taskRows = tasks.map(t => [
+        t.id,
+        t.title,
+        t.category?.toUpperCase() || "",
+        t.status?.replace("_", " ") || "",
+        t.assignedTo || "",
+        t.clientName || t.clientId || "",
+        t.dueDate ? new Date(t.dueDate).toLocaleDateString("en-IN") : "",
+        t.billingAmount || 0,
+        t.createdAt ? new Date(typeof t.createdAt === "number" ? t.createdAt * 1000 : t.createdAt).toLocaleDateString("en-IN") : "",
+      ]);
+      const wsTasks = XLSX.utils.aoa_to_sheet([taskHeaders, ...taskRows]);
+      wsTasks["!cols"] = [{ wch: 10 }, { wch: 35 }, { wch: 12 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 14 }];
+      XLSX.utils.book_append_sheet(wb, wsTasks, "Tasks");
+
+      // Sheet 3: Invoices
+      const invHeaders = ["Invoice No", "Client", "Status", "Amount (₹)", "GST (₹)", "Total (₹)", "Due Date", "Description"];
+      const invRows = invoices.map(i => [
+        i.invoiceNo || "",
+        i.clientName || i.clientId || "",
+        i.status || "",
+        i.amount || 0,
+        i.gstAmount || 0,
+        i.totalAmount || 0,
+        i.dueDate ? new Date(i.dueDate).toLocaleDateString("en-IN") : "",
+        i.description || "",
+      ]);
+      const wsInvoices = XLSX.utils.aoa_to_sheet([invHeaders, ...invRows]);
+      wsInvoices["!cols"] = [{ wch: 14 }, { wch: 20 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 30 }];
+      XLSX.utils.book_append_sheet(wb, wsInvoices, "Invoices");
+
+      // Download
+      const firmName = getUser()?.firmName || "Firm";
+      const date = new Date().toISOString().split("T")[0];
+      XLSX.writeFile(wb, `${firmName}_Report_${date}.xlsx`);
+      toast.success("Report exported successfully!");
+    } catch (e) {
+      console.error(e);
+      toast.error("Export failed. Please try again.");
+    }
+  };
 
   const tasksByCategory = tasks.reduce((acc: Record<string, number>, t) => {
     acc[t.category] = (acc[t.category] || 0) + 1;
@@ -37,8 +109,12 @@ export default function Reports() {
           <h1 className="text-2xl font-bold text-gray-900">Reports & Analytics</h1>
           <p className="text-gray-500 text-sm">Overview of your practice performance</p>
         </div>
-        <button className="flex items-center gap-2 border border-gray-200 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50">
-          <Download className="w-4 h-4" /> Export
+        <button
+          onClick={exportReport}
+          disabled={!stats}
+          className="flex items-center gap-2 border border-gray-200 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Download className="w-4 h-4" /> Export Excel
         </button>
       </div>
 

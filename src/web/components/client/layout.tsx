@@ -37,7 +37,7 @@ export default function ClientLayout({ children }: { children: React.ReactNode }
             </div>
             {sidebarOpen && (
               <div>
-                <p className="text-white font-bold text-sm leading-tight">SmartCompliance</p>
+                <p className="text-white font-bold text-sm leading-tight">Smart Compliance Tracker</p>
                 <p className="text-green-300 text-xs">Client Portal</p>
               </div>
             )}

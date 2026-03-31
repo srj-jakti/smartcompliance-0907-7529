@@ -228,3 +228,77 @@ export const demoBookings = sqliteTable("demo_bookings", {
   status: text("status").default("pending"),
   createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
 });
+
+// ─── ADMIN USERS ─────────────────────────────────────────────────────────────
+export const adminUsers = sqliteTable("admin_users", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").notNull().unique(),
+  password: text("password").notNull(),
+  role: text("role").notNull().default("support"), // superadmin, support
+  isActive: integer("is_active", { mode: "boolean" }).default(true),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// ─── SUBSCRIPTIONS ────────────────────────────────────────────────────────────
+export const subscriptions = sqliteTable("subscriptions", {
+  id: text("id").primaryKey(),
+  firmId: text("firm_id").notNull().unique(),
+  plan: text("plan").notNull().default("free"), // free, starter, pro, enterprise
+  status: text("status").notNull().default("active"), // active, suspended, cancelled
+  seats: integer("seats").default(5),
+  billingCycle: text("billing_cycle").default("monthly"),
+  amount: real("amount").default(0),
+  renewsAt: integer("renews_at", { mode: "timestamp" }),
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// ─── SUPPORT TICKETS ──────────────────────────────────────────────────────────
+export const supportTickets = sqliteTable("support_tickets", {
+  id: text("id").primaryKey(),
+  firmId: text("firm_id").notNull(),
+  firmName: text("firm_name"),
+  userId: text("user_id").notNull(),
+  userName: text("user_name").notNull(),
+  userRole: text("user_role").notNull(),
+  subject: text("subject").notNull(),
+  message: text("message").notNull(),
+  status: text("status").notNull().default("open"), // open, in_progress, resolved, closed
+  priority: text("priority").notNull().default("medium"), // low, medium, high, urgent
+  assignedTo: text("assigned_to"),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// ─── SUPPORT REPLIES ──────────────────────────────────────────────────────────
+export const supportReplies = sqliteTable("support_replies", {
+  id: text("id").primaryKey(),
+  ticketId: text("ticket_id").notNull(),
+  authorId: text("author_id").notNull(),
+  authorName: text("author_name").notNull(),
+  authorRole: text("author_role").notNull(), // admin, ca, employee, client
+  message: text("message").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// ─── ANNOUNCEMENTS ────────────────────────────────────────────────────────────
+export const announcements = sqliteTable("announcements", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  targetRole: text("target_role").default("all"), // all, ca, employee, client
+  isActive: integer("is_active", { mode: "boolean" }).default(true),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});
+
+// ─── FIRM AI KEYS ─────────────────────────────────────────────────────────────
+export const firmAiKeys = sqliteTable("firm_ai_keys", {
+  id: text("id").primaryKey(),
+  firmId: text("firm_id").notNull().unique(),
+  aiKey: text("ai_key").notNull(),
+  baseUrl: text("base_url").default("https://api.openai.com/v1"),
+  model: text("model").default("gpt-4o"),
+  isActive: integer("is_active", { mode: "boolean" }).default(true),
+  createdAt: integer("created_at", { mode: "timestamp" }).$defaultFn(() => new Date()),
+});

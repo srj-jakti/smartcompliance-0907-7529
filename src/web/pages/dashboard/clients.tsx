@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Plus, Search, Edit, Trash2, X, Phone, Mail, MapPin, CreditCard, Building2 } from "lucide-react";
+import { useLocation } from "wouter";
+import { Plus, Search, Edit, Trash2, X, Phone, Mail, MapPin, CreditCard, Building2, Eye } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
@@ -22,6 +23,7 @@ export default function Clients() {
   const [editId, setEditId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const [, navigate] = useLocation();
   const firmId = getUser()?.firmId || "";
   const load = () => fetch(`/api/clients?firmId=${firmId}${search ? `&search=${search}` : ""}`).then(r => r.json()).then(setClients);
   useEffect(() => { load(); }, [search]);
@@ -101,6 +103,9 @@ export default function Clients() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  <button onClick={() => navigate(`/dashboard/clients/${c.id}`)} className="flex items-center gap-1 px-3 py-1.5 bg-green-50 text-green-700 rounded-lg text-xs font-medium hover:bg-green-100">
+                    <Eye className="w-3.5 h-3.5" /> View
+                  </button>
                   <button onClick={() => edit(c)} className="p-2 hover:bg-blue-50 rounded-lg transition-colors">
                     <Edit className="w-4 h-4 text-blue-600" />
                   </button>

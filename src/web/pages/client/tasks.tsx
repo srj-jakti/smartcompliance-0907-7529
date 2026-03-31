@@ -7,7 +7,10 @@ export default function ClientTasks() {
   const [tasks, setTasks] = useState<any[]>([]);
   const [filter, setFilter] = useState("all");
 
-  useEffect(() => { fetch(`/api/tasks?firmId=${getUser()?.firmId||""}`).then(r => r.json()).then(setTasks); }, []);
+  useEffect(() => {
+    const u = getUser();
+    fetch(`/api/tasks?firmId=${u?.firmId||""}&clientId=${u?.id||""}`).then(r => r.json()).then(setTasks);
+  }, []);
 
   const filtered = tasks.filter(t => filter === "all" || t.status === filter);
 

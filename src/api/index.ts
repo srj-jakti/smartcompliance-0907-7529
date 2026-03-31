@@ -5,7 +5,7 @@ import * as schema from "./database/schema";
 // Use Web Crypto API (works in CF Workers + Node)
 const randomUUID = () => crypto.randomUUID();
 
-type Bindings = { DB: D1Database };
+type Bindings = { DB: D1Database; BUCKET: R2Bucket };
 const app = new Hono<{ Bindings: Bindings }>();
 
 // ─── SEED ────────────────────────────────────────────────────────────────────
@@ -193,6 +193,12 @@ app.post("/api/clients", async (c) => {
   return c.json(client, 201);
 });
 
+app.get("/api/clients/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const rows = await db.select().from(schema.clients).where(eq(schema.clients.id, c.req.param("id"))).limit(1);
+  return rows[0] ? c.json(rows[0]) : c.json(null, 404);
+});
+
 app.put("/api/clients/:id", async (c) => {
   const db = drizzle(c.env.DB, { schema });
   const body = await c.req.json();
@@ -323,8 +329,9 @@ app.get("/api/dsc", async (c) => {
   await seed(db);
   const firmId = c.req.query("firmId");
   if (!firmId) return c.json([]);
+  const clientId = c.req.query("clientId");
   const all = await db.select().from(schema.dscRecords).where(eq(schema.dscRecords.firmId, firmId));
-  return c.json(all);
+  return c.json(clientId ? all.filter(d => d.clientId === clientId) : all);
 });
 
 app.post("/api/dsc", async (c) => {
@@ -530,18 +537,96 @@ app.post("/api/ai/assign", async (c) => {
 // ─── AI CHAT ──────────────────────────────────────────────────────────────────
 app.post("/api/ai/chat", async (c) => {
   const body = await c.req.json();
-  const message = (body.message || "").toLowerCase();
-  const responses: Record<string, string> = {
-    gstr: "📋 **GSTR Deadlines:**\n• GSTR-1: 11th of next month\n• GSTR-3B: 20th of next month\n• GSTR-9 Annual: 31st December\n\nLate penalty: ₹50/day, max ₹5,000",
-    itr: "📊 **ITR FY 2024-25:**\n• Non-audit: 31st July 2025\n• Audit cases: 31st October 2025\n\nLate fee: ₹5,000 (₹1,000 if income < ₹5L)",
-    tds: "💰 **TDS Deadlines:**\n• Deposit: 7th of next month\n• Q1 return: July 31\n• Q2 return: Oct 31\n\nInterest: 1.5% per month on late deposit",
-    dsc: "🔐 **DSC Tips:**\n• Class 3 DSC: 1-3 years validity\n• Renew 30 days before expiry\n• Required for MCA, GST portal, IT portal",
-    penalty: "⚠️ **Common Penalties:**\n• Late GST: ₹50/day\n• Late ITR: ₹5,000\n• TDS default: 1.5%/month\n• ROC late filing: ₹100/day",
-    assign: "🤖 **AI Auto-Assign:**\nToggle ON in Settings → Team Settings. AI will assign new tasks based on employee specialization and current workload.",
-  };
-  let reply = "I'm your Smart Compliance AI. Ask about GST, ITR, TDS, DSC, penalties, or AI auto-assign!";
-  for (const [k, v] of Object.entries(responses)) { if (message.includes(k)) { reply = v; break; } }
-  return c.json({ reply, timestamp: new Date().toISOString() });
+  const message = body.message || "";
+  const history = body.history || []; // [{role, content}]
+  const firmId = body.firmId || "";
+
+  const baseUrl = c.env.AI_GATEWAY_BASE_URL || "https://api.openai.com/v1";
+  const apiKey = c.env.AI_GATEWAY_API_KEY;
+
+  // Fallback if no API key
+  if (!apiKey) {
+    const msg = message.toLowerCase();
+    const responses: Record<string, string> = {
+      gstr: "📋 **GSTR Deadlines:**\n• GSTR-1: 11th of next month\n• GSTR-3B: 20th of next month\n• GSTR-9 Annual: 31st December\n\nLate penalty: ₹50/day, max ₹5,000",
+      itr: "📊 **ITR FY 2024-25:**\n• Non-audit: 31st July 2025\n• Audit cases: 31st October 2025\n\nLate fee: ₹5,000 (₹1,000 if income < ₹5L)",
+      tds: "💰 **TDS Deadlines:**\n• Deposit: 7th of next month\n• Q1 return: July 31\n• Q2 return: Oct 31\n\nInterest: 1.5% per month on late deposit",
+      dsc: "🔐 **DSC Tips:**\n• Class 3 DSC: 1–3 years validity\n• Renew 30 days before expiry\n• Required for MCA, GST portal, IT portal",
+      penalty: "⚠️ **Common Penalties:**\n• Late GST: ₹50/day\n• Late ITR: ₹5,000\n• TDS default: 1.5%/month\n• ROC late filing: ₹100/day",
+    };
+    let reply = "I'm your Smart Compliance AI. Ask about GST, ITR, TDS, DSC, deadlines, or penalties!";
+    for (const [k, v] of Object.entries(responses)) { if (msg.includes(k)) { reply = v; break; } }
+    return c.json({ reply, timestamp: new Date().toISOString() });
+  }
+
+  // Fetch live context for the firm
+  let context = "";
+  if (firmId) {
+    try {
+      const db = drizzle(c.env.DB, { schema });
+      const today = new Date();
+      const [tasks, invoices, compliance, dscs] = await Promise.all([
+        db.select().from(schema.tasks).where(eq(schema.tasks.firmId, firmId)).limit(20),
+        db.select().from(schema.invoices).where(eq(schema.invoices.firmId, firmId)).limit(10),
+        db.select().from(schema.complianceDates).orderBy(schema.complianceDates.dueDate).limit(10),
+        db.select().from(schema.dscRecords).where(eq(schema.dscRecords.firmId, firmId)).limit(10),
+      ]);
+      const overdueTasks = tasks.filter(t => t.status === "overdue" || (t.dueDate && new Date(t.dueDate) < today && t.status !== "completed"));
+      const unpaidInvoices = invoices.filter(i => i.status !== "paid");
+      const expiringDsc = dscs.filter(d => {
+        const exp = new Date(d.expiryDate);
+        const days = Math.ceil((exp.getTime() - today.getTime()) / 86400000);
+        return days <= 30;
+      });
+      context = `\nFirm context (live data):
+- Total tasks: ${tasks.length} (${overdueTasks.length} overdue)
+- Unpaid invoices: ${unpaidInvoices.length} totaling ₹${unpaidInvoices.reduce((s, i) => s + (i.totalAmount || 0), 0).toLocaleString("en-IN")}
+- DSCs expiring in 30 days: ${expiringDsc.length}
+- Upcoming compliance deadlines: ${compliance.slice(0, 3).map(c => `${c.title} (${new Date(c.dueDate).toLocaleDateString("en-IN")})`).join(", ")}`;
+    } catch (_) { /* skip context on error */ }
+  }
+
+  const systemPrompt = `You are SmartCompliance AI, an expert CA practice management assistant for Indian chartered accountants. You help with:
+- GST filings, deadlines, penalties (GSTR-1, GSTR-3B, GSTR-9)
+- Income Tax (ITR filing, TDS, advance tax)
+- ROC/MCA compliance for companies
+- DSC management
+- Client and task management advice
+- Billing and invoicing best practices
+
+Be concise, use markdown formatting, include specific Indian tax deadlines and amounts. Always respond in the context of Indian tax laws and CA practice.${context}`;
+
+  try {
+    const messages = [
+      { role: "system", content: systemPrompt },
+      ...history.slice(-8), // last 8 messages for context window
+      { role: "user", content: message },
+    ];
+
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages,
+        max_tokens: 600,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error("OpenAI error:", errText);
+      return c.json({ reply: "Sorry, AI service is temporarily unavailable. Please try again.", timestamp: new Date().toISOString() });
+    }
+
+    const data: any = await res.json();
+    const reply = data.choices?.[0]?.message?.content || "I couldn't generate a response. Please try again.";
+    return c.json({ reply, timestamp: new Date().toISOString() });
+  } catch (e: any) {
+    console.error("AI chat error:", e);
+    return c.json({ reply: "AI service error. Please try again.", timestamp: new Date().toISOString() });
+  }
 });
 
 // ─── AI INVOICE EXTRACTION ────────────────────────────────────────────────────
@@ -681,6 +766,81 @@ app.delete("/api/leaves/:id", async (c) => {
   return c.json({ success: true });
 });
 
+// ─── DOCUMENTS ───────────────────────────────────────────────────────────────
+app.get("/api/documents", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const firmId = c.req.query("firmId");
+  const clientId = c.req.query("clientId");
+  if (!firmId) return c.json([]);
+  let q = db.select().from(schema.documents).where(eq(schema.documents.firmId, firmId));
+  const rows = await q;
+  const result = clientId
+    ? rows.filter(d => d.clientId === clientId && d.isClientVisible !== false)
+    : rows;
+  return c.json(result);
+});
+
+app.post("/api/documents/upload", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const formData = await c.req.formData();
+  const file = formData.get("file") as File | null;
+  const firmId = formData.get("firmId") as string;
+  const clientId = formData.get("clientId") as string || null;
+  const category = (formData.get("category") as string) || "other";
+  const uploadedBy = (formData.get("uploadedBy") as string) || "Admin";
+  const uploadedByRole = (formData.get("uploadedByRole") as string) || "ca";
+
+  if (!file || !firmId) return c.json({ error: "Missing file or firmId" }, 400);
+
+  const ext = file.name.split(".").pop() || "bin";
+  const key = `${firmId}/${randomUUID()}.${ext}`;
+  const arrayBuffer = await file.arrayBuffer();
+
+  await c.env.BUCKET.put(key, arrayBuffer, {
+    httpMetadata: { contentType: file.type },
+  });
+
+  const fileUrl = `/api/documents/file/${key}`;
+  const doc = {
+    id: randomUUID(),
+    firmId,
+    clientId,
+    name: file.name,
+    fileUrl,
+    fileType: ext,
+    fileSize: file.size,
+    category,
+    uploadedBy,
+    uploadedByRole,
+    isClientVisible: true,
+  };
+  await db.insert(schema.documents).values(doc);
+  return c.json(doc, 201);
+});
+
+app.get("/api/documents/file/*", async (c) => {
+  // key = firmId/uuid.ext (everything after /api/documents/file/)
+  const key = c.req.path.replace("/api/documents/file/", "");
+  const obj = await c.env.BUCKET.get(key);
+  if (!obj) return c.json({ error: "Not found" }, 404);
+  const headers = new Headers();
+  obj.writeHttpMetadata(headers);
+  headers.set("etag", obj.httpEtag);
+  return new Response(obj.body, { headers });
+});
+
+app.delete("/api/documents/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  const rows = await db.select().from(schema.documents).where(eq(schema.documents.id, id)).limit(1);
+  if (rows[0]?.fileUrl) {
+    const key = rows[0].fileUrl.replace("/api/documents/file/", "");
+    await c.env.BUCKET.delete(key).catch(() => {});
+  }
+  await db.delete(schema.documents).where(eq(schema.documents.id, id));
+  return c.json({ success: true });
+});
+
 // ─── DEMO BOOKING ────────────────────────────────────────────────────────────
 app.post("/api/demo", async (c) => {
   const db = drizzle(c.env.DB, { schema });
@@ -690,3 +850,280 @@ app.post("/api/demo", async (c) => {
 });
 
 export default app;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── ADMIN BACKEND API ───────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Seed default superadmin
+async function seedAdmin(db: any) {
+  await db.insert(schema.adminUsers).values({
+    id: "admin1",
+    name: "Platform Admin",
+    email: "admin@smartcompliance.in",
+    password: "admin@123",
+    role: "superadmin",
+  }).onConflictDoNothing();
+}
+
+// ─── ADMIN AUTH ───────────────────────────────────────────────────────────────
+app.post("/api/admin/login", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  await seedAdmin(db);
+  const { email, password } = await c.req.json();
+  const admins = await db.select().from(schema.adminUsers)
+    .where(and(eq(schema.adminUsers.email, email), eq(schema.adminUsers.password, password), eq(schema.adminUsers.isActive, true)))
+    .limit(1);
+  if (!admins.length) return c.json({ error: "Invalid credentials" }, 401);
+  return c.json(admins[0]);
+});
+
+// ─── ADMIN OVERVIEW ───────────────────────────────────────────────────────────
+app.get("/api/admin/stats", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const [allFirms, allClients, allEmployees, allTasks, allInvoices, openTickets, subs] = await Promise.all([
+    db.select().from(schema.firms),
+    db.select().from(schema.clients),
+    db.select().from(schema.employees),
+    db.select().from(schema.tasks),
+    db.select().from(schema.invoices),
+    db.select().from(schema.supportTickets).where(eq(schema.supportTickets.status, "open")),
+    db.select().from(schema.subscriptions),
+  ]);
+  const totalRevenue = allInvoices.filter(i => i.status === "paid").reduce((s, i) => s + (i.totalAmount || 0), 0);
+  const mrr = subs.filter(s => s.status === "active").reduce((s, sub) => s + (sub.amount || 0), 0);
+  return c.json({
+    totalFirms: allFirms.length,
+    totalClients: allClients.length,
+    totalEmployees: allEmployees.length,
+    totalTasks: allTasks.length,
+    totalRevenue,
+    mrr,
+    openTickets: openTickets.length,
+    activeSubs: subs.filter(s => s.status === "active").length,
+  });
+});
+
+// ─── FIRMS MANAGEMENT ────────────────────────────────────────────────────────
+app.get("/api/admin/firms", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const firms = await db.select().from(schema.firms).orderBy(desc(schema.firms.createdAt));
+  // Enrich with sub info
+  const subs = await db.select().from(schema.subscriptions);
+  const subMap = Object.fromEntries(subs.map(s => [s.firmId, s]));
+  return c.json(firms.map(f => ({ ...f, subscription: subMap[f.id] || null })));
+});
+
+app.post("/api/admin/firms", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const body = await c.req.json();
+  const id = randomUUID();
+  await db.insert(schema.firms).values({ id, ...body });
+  // Auto-create free subscription
+  await db.insert(schema.subscriptions).values({ id: randomUUID(), firmId: id, plan: "free", status: "active", seats: 5, amount: 0 }).onConflictDoNothing();
+  return c.json({ id, ...body }, 201);
+});
+
+app.put("/api/admin/firms/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  const body = await c.req.json();
+  await db.update(schema.firms).set(body).where(eq(schema.firms.id, id));
+  return c.json({ success: true });
+});
+
+app.delete("/api/admin/firms/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  await db.delete(schema.firms).where(eq(schema.firms.id, id));
+  return c.json({ success: true });
+});
+
+// ─── USERS (all roles) ────────────────────────────────────────────────────────
+app.get("/api/admin/users", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const [firms, employees, clients] = await Promise.all([
+    db.select().from(schema.firms).orderBy(desc(schema.firms.createdAt)),
+    db.select().from(schema.employees).orderBy(desc(schema.employees.createdAt)),
+    db.select().from(schema.clients).orderBy(desc(schema.clients.createdAt)),
+  ]);
+  return c.json({ firms, employees, clients });
+});
+
+// ─── SUBSCRIPTIONS ────────────────────────────────────────────────────────────
+app.get("/api/admin/subscriptions", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const subs = await db.select().from(schema.subscriptions).orderBy(desc(schema.subscriptions.createdAt));
+  const firms = await db.select().from(schema.firms);
+  const firmMap = Object.fromEntries(firms.map(f => [f.id, f]));
+  return c.json(subs.map(s => ({ ...s, firm: firmMap[s.firmId] || null })));
+});
+
+app.put("/api/admin/subscriptions/:firmId", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { firmId } = c.req.param();
+  const body = await c.req.json();
+  const existing = await db.select().from(schema.subscriptions).where(eq(schema.subscriptions.firmId, firmId)).limit(1);
+  if (existing.length) {
+    await db.update(schema.subscriptions).set(body).where(eq(schema.subscriptions.firmId, firmId));
+  } else {
+    await db.insert(schema.subscriptions).values({ id: randomUUID(), firmId, ...body });
+  }
+  return c.json({ success: true });
+});
+
+// ─── AI KEYS ──────────────────────────────────────────────────────────────────
+app.get("/api/admin/ai-keys", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const keys = await db.select().from(schema.firmAiKeys);
+  const firms = await db.select().from(schema.firms);
+  const firmMap = Object.fromEntries(firms.map(f => [f.id, f]));
+  return c.json(keys.map(k => ({ ...k, firm: firmMap[k.firmId] || null })));
+});
+
+app.put("/api/admin/ai-keys/:firmId", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { firmId } = c.req.param();
+  const body = await c.req.json();
+  const existing = await db.select().from(schema.firmAiKeys).where(eq(schema.firmAiKeys.firmId, firmId)).limit(1);
+  if (existing.length) {
+    await db.update(schema.firmAiKeys).set(body).where(eq(schema.firmAiKeys.firmId, firmId));
+  } else {
+    await db.insert(schema.firmAiKeys).values({ id: randomUUID(), firmId, ...body });
+  }
+  return c.json({ success: true });
+});
+
+app.delete("/api/admin/ai-keys/:firmId", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { firmId } = c.req.param();
+  await db.delete(schema.firmAiKeys).where(eq(schema.firmAiKeys.firmId, firmId));
+  return c.json({ success: true });
+});
+
+// ─── SUPPORT TICKETS ──────────────────────────────────────────────────────────
+app.get("/api/admin/tickets", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const status = c.req.query("status");
+  let q = db.select().from(schema.supportTickets).orderBy(desc(schema.supportTickets.createdAt));
+  const tickets = await q;
+  return c.json(status ? tickets.filter(t => t.status === status) : tickets);
+});
+
+app.put("/api/admin/tickets/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  const body = await c.req.json();
+  await db.update(schema.supportTickets).set({ ...body, updatedAt: new Date() }).where(eq(schema.supportTickets.id, id));
+  return c.json({ success: true });
+});
+
+app.get("/api/admin/tickets/:id/replies", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  const replies = await db.select().from(schema.supportReplies).where(eq(schema.supportReplies.ticketId, id)).orderBy(schema.supportReplies.createdAt);
+  return c.json(replies);
+});
+
+app.post("/api/admin/tickets/:id/reply", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  const body = await c.req.json();
+  const reply = { id: randomUUID(), ticketId: id, ...body };
+  await db.insert(schema.supportReplies).values(reply);
+  await db.update(schema.supportTickets).set({ status: "in_progress", updatedAt: new Date() }).where(eq(schema.supportTickets.id, id));
+  return c.json(reply, 201);
+});
+
+// ─── PUBLIC: Submit support ticket (from CA/client portal) ───────────────────
+app.post("/api/support/tickets", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const body = await c.req.json();
+  const ticket = { id: randomUUID(), ...body };
+  await db.insert(schema.supportTickets).values(ticket);
+  return c.json(ticket, 201);
+});
+
+app.get("/api/support/tickets", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const firmId = c.req.query("firmId");
+  const userId = c.req.query("userId");
+  if (!firmId) return c.json([]);
+  const all = await db.select().from(schema.supportTickets).where(eq(schema.supportTickets.firmId, firmId)).orderBy(desc(schema.supportTickets.createdAt));
+  return c.json(userId ? all.filter(t => t.userId === userId) : all);
+});
+
+app.get("/api/support/tickets/:id/replies", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  return c.json(await db.select().from(schema.supportReplies).where(eq(schema.supportReplies.ticketId, id)).orderBy(schema.supportReplies.createdAt));
+});
+
+app.post("/api/support/tickets/:id/reply", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  const body = await c.req.json();
+  const reply = { id: randomUUID(), ticketId: id, ...body };
+  await db.insert(schema.supportReplies).values(reply);
+  return c.json(reply, 201);
+});
+
+// ─── ANNOUNCEMENTS ────────────────────────────────────────────────────────────
+app.get("/api/admin/announcements", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  return c.json(await db.select().from(schema.announcements).orderBy(desc(schema.announcements.createdAt)));
+});
+
+app.post("/api/admin/announcements", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const body = await c.req.json();
+  const row = { id: randomUUID(), ...body };
+  await db.insert(schema.announcements).values(row);
+  return c.json(row, 201);
+});
+
+app.put("/api/admin/announcements/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  const body = await c.req.json();
+  await db.update(schema.announcements).set(body).where(eq(schema.announcements.id, id));
+  return c.json({ success: true });
+});
+
+app.delete("/api/admin/announcements/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  await db.delete(schema.announcements).where(eq(schema.announcements.id, id));
+  return c.json({ success: true });
+});
+
+// ─── PUBLIC: Get active announcements ────────────────────────────────────────
+app.get("/api/announcements", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const role = c.req.query("role") || "all";
+  const all = await db.select().from(schema.announcements).where(eq(schema.announcements.isActive, true)).orderBy(desc(schema.announcements.createdAt));
+  return c.json(all.filter(a => a.targetRole === "all" || a.targetRole === role));
+});
+
+// ─── ADMIN USERS MANAGEMENT ───────────────────────────────────────────────────
+app.get("/api/admin/admins", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  await seedAdmin(db);
+  return c.json(await db.select().from(schema.adminUsers).orderBy(desc(schema.adminUsers.createdAt)));
+});
+
+app.post("/api/admin/admins", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const body = await c.req.json();
+  const row = { id: randomUUID(), ...body };
+  await db.insert(schema.adminUsers).values(row);
+  return c.json(row, 201);
+});
+
+app.put("/api/admin/admins/:id", async (c) => {
+  const db = drizzle(c.env.DB, { schema });
+  const { id } = c.req.param();
+  const body = await c.req.json();
+  await db.update(schema.adminUsers).set(body).where(eq(schema.adminUsers.id, id));
+  return c.json({ success: true });
+});

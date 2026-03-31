@@ -1,10 +1,14 @@
 import { useEffect, useState } from "react";
 import { Calendar, AlertTriangle, Clock, Bell } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { getUser } from "@/lib/auth";
 
 export default function ClientCompliance() {
   const [items, setItems] = useState<any[]>([]);
-  useEffect(() => { fetch("/api/compliance").then(r => r.json()).then(setItems); }, []);
+  useEffect(() => {
+    const u = getUser();
+    fetch(`/api/compliance?firmId=${u?.firmId||""}`).then(r => r.json()).then(setItems);
+  }, []);
 
   const today = new Date();
   const getDays = (d: string) => Math.ceil((new Date(d).getTime() - today.getTime()) / 86400000);

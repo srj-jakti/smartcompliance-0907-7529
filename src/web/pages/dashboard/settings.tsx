@@ -1,17 +1,56 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Save, Bell, MessageSquare, Shield, Building2, User, Zap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
+import { getUser } from "@/lib/auth";
 
 export default function Settings() {
-  const [firmName, setFirmName] = useState("CA Firm Name");
-  const [email, setEmail] = useState("admin@cafirm.in");
-  const [phone, setPhone] = useState("+91 98765 43210");
+  const [firmName, setFirmName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [gstin, setGstin] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [notifications, setNotifications] = useState({ email: true, whatsapp: true, telegram: false, sms: true });
   const [alerts, setAlerts] = useState({ compliance15days: true, dscExpiry30days: true, overdueTask: true, invoiceDue: true });
 
-  const save = () => toast.success("Settings saved successfully!");
+  const firmId = getUser()?.firmId || "";
+
+  useEffect(() => {
+    if (!firmId) { setLoading(false); return; }
+    fetch(`/api/firms/${firmId}`)
+      .then(r => r.json())
+      .then((firm: any) => {
+        if (firm) {
+          setFirmName(firm.name || "");
+          setEmail(firm.email || "");
+          setPhone(firm.phone || "");
+          setGstin(firm.gstin || "");
+        }
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [firmId]);
+
+  const save = async () => {
+    if (!firmId) { toast.error("No firm ID found"); return; }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/firms/${firmId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: firmName, email, phone, gstin }),
+      });
+      if (res.ok) toast.success("Settings saved successfully!");
+      else toast.error("Failed to save settings");
+    } catch {
+      toast.error("Failed to save settings");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div className="flex items-center justify-center h-64 text-gray-400">Loading...</div>;
 
   return (
     <div>
@@ -20,8 +59,8 @@ export default function Settings() {
           <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
           <p className="text-gray-500 text-sm">Configure your practice preferences</p>
         </div>
-        <button onClick={save} className="btn-blue flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium">
-          <Save className="w-4 h-4" /> Save Changes
+        <button onClick={save} disabled={saving} className="btn-blue flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-60">
+          <Save className="w-4 h-4" /> {saving ? "Saving..." : "Save Changes"}
         </button>
       </div>
 

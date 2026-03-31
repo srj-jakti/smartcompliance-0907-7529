@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, Bot, User, Zap, MessageSquare, Phone } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { getUser } from "@/lib/auth";
 
 interface Message { role: "user" | "ai"; content: string; timestamp: string; }
 
@@ -14,6 +15,7 @@ const quickQuestions = [
 ];
 
 export default function AIAssistant() {
+  const user = getUser();
   const [messages, setMessages] = useState<Message[]>([
     { role: "ai", content: "Namaste! 🙏 I'm your Smart Compliance AI Assistant. I can help you with:\n\n• **GST rules & deadlines** (GSTR-1, 3B, 9)\n• **ITR filing** sections and deadlines\n• **TDS rates** and deposit dates\n• **DSC management** tips\n• **Penalty calculations**\n• **Compliance calendar** queries\n\nAsk me anything about Indian tax compliance!", timestamp: new Date().toISOString() }
   ]);
@@ -31,7 +33,8 @@ export default function AIAssistant() {
     setMessages(prev => [...prev, userMsg]);
     setLoading(true);
     try {
-      const res = await fetch("/api/ai/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
+      const history = messages.slice(-8).map(m => ({ role: m.role === "ai" ? "assistant" : "user", content: m.content }));
+      const res = await fetch("/api/ai/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text, history, firmId: user?.firmId || "" }) });
       const data = await res.json();
       setMessages(prev => [...prev, { role: "ai", content: data.reply, timestamp: data.timestamp }]);
     } catch {
@@ -40,15 +43,55 @@ export default function AIAssistant() {
   };
 
   const formatContent = (text: string) => {
-    return text.split("\n").map((line, i) => {
-      if (line.startsWith("**") && line.endsWith("**")) {
-        return <p key={i} className="font-bold">{line.slice(2, -2)}</p>;
+    // Process inline bold (**text**) within a string
+    const renderInline = (str: string, key: number) => {
+      const parts = str.split(/(\*\*[^*]+\*\*)/g);
+      return (
+        <span key={key}>
+          {parts.map((p, j) =>
+            p.startsWith("**") && p.endsWith("**")
+              ? <strong key={j}>{p.slice(2, -2)}</strong>
+              : p
+          )}
+        </span>
+      );
+    };
+
+    const lines = text.split("\n");
+    const result: JSX.Element[] = [];
+    let listItems: JSX.Element[] = [];
+
+    const flushList = () => {
+      if (listItems.length > 0) {
+        result.push(<ul key={`ul-${result.length}`} className="list-disc ml-5 space-y-0.5 my-1">{listItems}</ul>);
+        listItems = [];
       }
-      if (line.startsWith("• ")) {
-        return <li key={i} className="ml-4 list-disc">{line.slice(2)}</li>;
+    };
+
+    lines.forEach((line, i) => {
+      if (line.startsWith("### ")) {
+        flushList();
+        result.push(<p key={i} className="font-bold text-base mt-2">{line.slice(4)}</p>);
+      } else if (line.startsWith("## ")) {
+        flushList();
+        result.push(<p key={i} className="font-bold text-base mt-2">{line.slice(3)}</p>);
+      } else if (line.startsWith("# ")) {
+        flushList();
+        result.push(<p key={i} className="font-bold text-lg mt-2">{line.slice(2)}</p>);
+      } else if (line.startsWith("- ") || line.startsWith("• ")) {
+        listItems.push(<li key={i}>{renderInline(line.slice(2), i)}</li>);
+      } else if (/^\d+\. /.test(line)) {
+        listItems.push(<li key={i}>{renderInline(line.replace(/^\d+\. /, ""), i)}</li>);
+      } else if (line.trim() === "") {
+        flushList();
+        if (result.length > 0) result.push(<div key={i} className="h-1" />);
+      } else {
+        flushList();
+        result.push(<p key={i}>{renderInline(line, i)}</p>);
       }
-      return <p key={i} className={line === "" ? "mt-2" : ""}>{line}</p>;
     });
+    flushList();
+    return result;
   };
 
   return (
@@ -56,7 +99,7 @@ export default function AIAssistant() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">AI Tax Assistant</h1>
-          <p className="text-gray-500 text-sm">Powered by Indian tax law knowledge</p>
+          <p className="text-gray-500 text-sm">Powered by GPT-4o · Live firm context</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />

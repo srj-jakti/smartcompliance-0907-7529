@@ -73,7 +73,7 @@ export default function Login() {
               <Zap className="w-6 h-6 text-white" />
             </div>
             <div>
-              <p className="text-white font-bold text-xl">Smart<span className="text-blue-300">Compliance</span></p>
+              <p className="text-white font-bold text-xl">Smart Compliance <span className="text-blue-300">Tracker</span></p>
               <p className="text-blue-300 text-xs">CA Practice Suite</p>
             </div>
           </div>
@@ -106,7 +106,7 @@ export default function Login() {
         <div className="w-full max-w-md">
           <div className="flex items-center gap-2 mb-6 lg:hidden">
             <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center"><Zap className="w-5 h-5 text-white" /></div>
-            <span className="text-white font-bold text-lg">Smart<span className="text-blue-300">Compliance</span></span>
+            <span className="text-white font-bold text-lg">Smart Compliance <span className="text-blue-300">Tracker</span></span>
           </div>
 
           <div className="bg-white rounded-2xl shadow-2xl overflow-hidden">

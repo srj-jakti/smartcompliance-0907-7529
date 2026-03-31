@@ -29,7 +29,7 @@ export default function EmployeeLayout({ children }: { children: React.ReactNode
             </div>
             {sidebarOpen && (
               <div>
-                <p className="text-white font-bold text-sm">SmartCompliance</p>
+                <p className="text-white font-bold text-sm">Smart Compliance Tracker</p>
                 <p className="text-purple-300 text-xs">Employee Portal</p>
               </div>
             )}
